@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom';
-import { useRecentFeedings, useWeeklyGoals, useBakingSessions, useReminderSettings } from '../hooks/useData';
-import { format, parseISO, differenceInHours } from 'date-fns';
+import { useRecentFeedings, useWeeklyGoals, useBakingSessions, useUpcomingGoals, useRecipes } from '../hooks/useData';
+import { format, parseISO, differenceInHours, isToday, isTomorrow } from 'date-fns';
 
 export default function Dashboard() {
   const feedings = useRecentFeedings(3);
   const goals = useWeeklyGoals();
   const sessions = useBakingSessions();
-  const reminder = useReminderSettings();
+  const upcomingGoals = useUpcomingGoals(14);
+  const recipes = useRecipes();
 
   const lastFed = feedings?.[0];
   const hoursSinceFed = lastFed
@@ -24,6 +25,8 @@ export default function Dashboard() {
   const activeSessions = sessions?.filter(s => s.stage !== -1) || [];
   const completedGoals = goals?.filter(g => g.status === 'complete').length || 0;
   const totalGoals = goals?.length || 0;
+
+  const timeline = buildTimeline(upcomingGoals, recipes);
 
   return (
     <div style={{ animation: 'fadeUp 0.5s ease' }}>
@@ -60,6 +63,26 @@ export default function Dashboard() {
           icon="◈"
         />
       </div>
+
+      {/* Daily Timeline */}
+      {timeline.length > 0 && (
+        <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+            <h3 className="serif" style={{ fontSize: '1.1rem' }}>Starter & Bake Timeline</h3>
+            <Link to="/goals" style={{ fontSize: '0.8rem', color: 'var(--crust)', textDecoration: 'none' }}>
+              Manage goals →
+            </Link>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+            {timeline.map((task, i) => (
+              <TimelineItem key={i} task={task} isLast={i === timeline.length - 1} />
+            ))}
+          </div>
+          <p style={{ fontSize: '0.72rem', color: 'var(--mist)', marginTop: '14px', fontStyle: 'italic' }}>
+            Feeding times assume 8-hour starter activity window. Levain build starts 12 hours before bake day.
+          </p>
+        </div>
+      )}
 
       <div className="responsive-grid-2">
         {/* Recent feedings */}
@@ -119,6 +142,118 @@ export default function Dashboard() {
   );
 }
 
+// ── Timeline ──────────────────────────────────────────────────────
+function buildTimeline(upcomingGoals, recipes) {
+  if (!upcomingGoals?.length) return [];
+
+  const tasks = [];
+
+  for (const goal of upcomingGoals) {
+    if (!goal.targetDate) continue;
+
+    const bakeDay = new Date(goal.targetDate);
+    bakeDay.setHours(8, 0, 0, 0); // Assume bake starts at 8am
+
+    const recipe = recipes?.find(r => r.id === goal.recipeId);
+    const starterNeeded = recipe?.starterAmount || 20;
+
+    // Levain build: evening before bake day (bakeDay minus 12 hours)
+    const levainTime = new Date(bakeDay.getTime() - 12 * 60 * 60 * 1000);
+    // Feed starter: 8 hours before levain build
+    const feedTime = new Date(levainTime.getTime() - 8 * 60 * 60 * 1000);
+
+    const now = new Date();
+
+    if (feedTime > now) {
+      tasks.push({
+        date: feedTime,
+        type: 'feed',
+        goal: goal.recipeName,
+        detail: `Feed starter so it's active for the levain build`,
+        amount: null,
+      });
+    }
+
+    if (levainTime > now) {
+      tasks.push({
+        date: levainTime,
+        type: 'levain',
+        goal: goal.recipeName,
+        detail: `Build levain: ${starterNeeded}g starter + ${starterNeeded}g flour + ${starterNeeded}g water`,
+        amount: starterNeeded,
+      });
+    }
+
+    tasks.push({
+      date: bakeDay,
+      type: 'bake',
+      goal: goal.recipeName,
+      detail: recipe ? `Follow the "${recipe.name}" recipe stages` : `Start your bake`,
+      amount: null,
+    });
+  }
+
+  return tasks
+    .sort((a, b) => a.date - b.date)
+    .slice(0, 10); // Show next 10 tasks max
+}
+
+const TASK_STYLES = {
+  feed: { color: 'var(--crust)', bg: '#FFF3E8', icon: '○', label: 'Feed Starter' },
+  levain: { color: '#5563A8', bg: '#EEF0F8', icon: '◉', label: 'Build Levain' },
+  bake: { color: 'var(--rise)', bg: 'var(--rise-light)', icon: '◈', label: 'Bake Day' },
+};
+
+function TimelineItem({ task, isLast }) {
+  const style = TASK_STYLES[task.type];
+  const dateLabel = isToday(task.date)
+    ? `Today, ${format(task.date, 'h:mm a')}`
+    : isTomorrow(task.date)
+    ? `Tomorrow, ${format(task.date, 'h:mm a')}`
+    : format(task.date, 'EEEE MMM d, h:mm a');
+
+  const isPast = task.date < new Date();
+
+  return (
+    <div style={{ display: 'flex', gap: '14px', opacity: isPast ? 0.5 : 1 }}>
+      {/* Timeline spine */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{
+          width: '32px', height: '32px', borderRadius: '50%',
+          background: style.bg, color: style.color,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '0.9rem', fontWeight: '700', flexShrink: 0,
+        }}>
+          {style.icon}
+        </div>
+        {!isLast && (
+          <div style={{ width: '2px', flex: 1, minHeight: '28px', background: 'var(--crumb)', margin: '4px 0' }} />
+        )}
+      </div>
+
+      {/* Content */}
+      <div style={{ paddingBottom: isLast ? '0' : '20px', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: '600', color: style.color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {style.label}
+          </span>
+          {isToday(task.date) && (
+            <span style={{ fontSize: '0.62rem', fontWeight: '700', color: 'white', background: 'var(--alert)', padding: '1px 7px', borderRadius: '999px', letterSpacing: '0.05em' }}>
+              TODAY
+            </span>
+          )}
+        </div>
+        <p style={{ fontSize: '0.875rem', fontWeight: '500', color: 'var(--char)', marginBottom: '2px' }}>
+          {task.goal}
+        </p>
+        <p style={{ fontSize: '0.78rem', color: 'var(--ash)' }}>{task.detail}</p>
+        <p style={{ fontSize: '0.72rem', color: 'var(--mist)', marginTop: '2px' }}>{dateLabel}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared components ─────────────────────────────────────────────
 function StatCard({ label, value, sub, accent, icon }) {
   return (
     <div className="card" style={{ padding: '20px 24px' }}>

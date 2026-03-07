@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { useAllGoals, addGoal, updateGoalStatus, deleteGoal } from '../hooks/useData';
-import { format, parseISO, startOfWeek, endOfWeek, isSameWeek } from 'date-fns';
+import { useAllGoals, useRecipes, addGoal, updateGoalStatus, deleteGoal } from '../hooks/useData';
+import { format, parseISO, isSameWeek } from 'date-fns';
+import { startOfWeek } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 const STATUS_OPTIONS = ['planned', 'in-progress', 'complete', 'skipped'];
 const STATUS_COLORS = {
@@ -67,8 +69,24 @@ export default function GoalsPage() {
 }
 
 function GoalForm({ onSave }) {
-  const [form, setForm] = useState({ recipeName: '', targetDate: '', notes: '' });
+  const recipes = useRecipes();
+  const [recipeMode, setRecipeMode] = useState('existing'); // 'existing' | 'manual'
+  const [form, setForm] = useState({ recipeName: '', recipeId: null, targetDate: '', notes: '' });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleRecipeSelect = (e) => {
+    const id = e.target.value;
+    if (!id) {
+      set('recipeId', null);
+      set('recipeName', '');
+      return;
+    }
+    const recipe = recipes?.find(r => r.id === +id);
+    if (recipe) {
+      set('recipeId', recipe.id);
+      set('recipeName', recipe.name);
+    }
+  };
 
   const handleSave = async () => {
     if (!form.recipeName.trim()) return;
@@ -79,16 +97,65 @@ function GoalForm({ onSave }) {
   return (
     <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
       <h3 className="serif" style={{ fontSize: '1.1rem', marginBottom: '16px' }}>New Baking Goal</h3>
+
+      {/* Recipe selection mode toggle */}
+      <div className="tab-bar" style={{ marginBottom: '16px' }}>
+        {[['existing', 'Select a Recipe'], ['manual', 'Enter Name Manually']].map(([key, label]) => (
+          <button key={key} onClick={() => {
+            setRecipeMode(key);
+            set('recipeId', null);
+            set('recipeName', '');
+          }} style={{
+            padding: '7px 16px', borderRadius: '9px', border: 'none', cursor: 'pointer',
+            background: recipeMode === key ? 'white' : 'transparent',
+            color: recipeMode === key ? 'var(--char)' : 'var(--mist)',
+            fontWeight: recipeMode === key ? '500' : '400',
+            fontSize: '0.82rem',
+            boxShadow: recipeMode === key ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+            transition: 'all 0.15s',
+          }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-        <div style={{ gridColumn: '1 / -1' }}>
-          <label>Recipe / Bread Name</label>
-          <input
-            type="text"
-            value={form.recipeName}
-            onChange={e => set('recipeName', e.target.value)}
-            placeholder="e.g. Country Sourdough, Rye Loaf, Focaccia..."
-          />
-        </div>
+        {recipeMode === 'existing' ? (
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label>Recipe</label>
+            {!recipes?.length ? (
+              <div style={{ padding: '12px 14px', background: 'var(--cream)', borderRadius: '10px', fontSize: '0.82rem', color: 'var(--mist)' }}>
+                No recipes saved yet.{' '}
+                <Link to="/recipes" style={{ color: 'var(--crust)', fontWeight: '500' }}>
+                  Create a recipe first →
+                </Link>
+              </div>
+            ) : (
+              <select onChange={handleRecipeSelect} defaultValue="">
+                <option value="">— select a recipe —</option>
+                {recipes.map(r => (
+                  <option key={r.id} value={r.id}>{r.name}{r.style ? ` (${r.style})` : ''}</option>
+                ))}
+              </select>
+            )}
+            {form.recipeId && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--rise)', marginTop: '6px' }}>
+                ✓ Recipe linked — starter feeding will be calculated from this recipe's requirements
+              </p>
+            )}
+          </div>
+        ) : (
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label>Recipe / Bread Name</label>
+            <input
+              type="text"
+              value={form.recipeName}
+              onChange={e => set('recipeName', e.target.value)}
+              placeholder="e.g. Country Sourdough, Rye Loaf, Focaccia..."
+            />
+          </div>
+        )}
+
         <div>
           <label>Target Bake Date</label>
           <input type="date" value={form.targetDate} onChange={e => set('targetDate', e.target.value)} />
@@ -99,7 +166,13 @@ function GoalForm({ onSave }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
-        <button className="btn-primary" onClick={handleSave}>Save Goal</button>
+        <button
+          className="btn-primary"
+          onClick={handleSave}
+          disabled={recipeMode === 'existing' ? !form.recipeId : !form.recipeName.trim()}
+        >
+          Save Goal
+        </button>
         <button className="btn-secondary" onClick={onSave}>Cancel</button>
       </div>
     </div>
@@ -130,6 +203,11 @@ function GoalCard({ goal, compact }) {
             }}>
               {goal.status}
             </span>
+            {goal.recipeId && (
+              <span style={{ fontSize: '0.68rem', color: 'var(--rise)', background: 'var(--rise-light)', padding: '2px 8px', borderRadius: '999px' }}>
+                Recipe linked
+              </span>
+            )}
           </div>
           {!compact && (
             <div style={{ fontSize: '0.78rem', color: 'var(--mist)', marginTop: '4px', display: 'flex', gap: '12px' }}>
