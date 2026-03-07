@@ -50,7 +50,7 @@ export default function RecipesPage() {
       ) : (
         <>
           {/* Summary stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '32px' }}>
+          <div className="responsive-grid-3">
             <StatTile label="Total Bakes" value={completed.length} />
             <StatTile label="Average Rating" value={avg ? `${avg}/10` : '—'} accent="var(--crust)" />
             <StatTile label="Best Bake" value={best?.recipeName || '—'} accent="var(--rise)" sub={best?.rating ? `${best.rating}/10` : ''} />

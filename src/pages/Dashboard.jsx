@@ -37,7 +37,7 @@ export default function Dashboard() {
       </div>
 
       {/* Status cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+      <div className="responsive-grid-3">
         <StatCard
           label="Starter Status"
           value={status.label}
@@ -61,7 +61,7 @@ export default function Dashboard() {
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div className="responsive-grid-2">
         {/* Recent feedings */}
         <div className="card" style={{ padding: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>

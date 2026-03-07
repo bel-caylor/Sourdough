@@ -20,7 +20,7 @@ export default function StarterPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'var(--crumb)', padding: '4px', borderRadius: '12px', width: 'fit-content' }}>
+      <div className="tab-bar">
         {[['feed', '🫙 Log Feeding'], ['health', '◉ Health Check'], ['reminders', '⏰ Reminders']].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={{
             padding: '8px 18px', borderRadius: '9px', border: 'none', cursor: 'pointer',
@@ -36,7 +36,7 @@ export default function StarterPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div className="responsive-grid-2">
         <div>
           {tab === 'feed' && <FeedingForm />}
           {tab === 'health' && <HealthForm />}
