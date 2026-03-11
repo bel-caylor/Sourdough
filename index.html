@@ -10,6 +10,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
   </head>
   <body>
+    <script>
+      (function(){var q=window.location.search.slice(1).split('&').reduce(function(a,v){var kv=v.split('=');if(kv[0]==='p')a.p=decodeURIComponent(kv[1].replace(/~and~/g,'&'));if(kv[0]==='q')a.q='?'+decodeURIComponent(kv[1].replace(/~and~/g,'&'));return a},{});if(q.p!=null)window.history.replaceState(null,null,window.location.pathname.split('/').slice(0,2).join('/')+q.p+(q.q||'')+window.location.hash);}());
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

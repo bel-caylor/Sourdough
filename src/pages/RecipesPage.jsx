@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRecipes, addRecipe, updateRecipe, deleteRecipe, useBakeNotes, addBakeNote, deleteBakeNote, useAppSettings, updateAppSettings } from '../hooks/useData';
 import { generateRecipe } from '../lib/ai';
 import { format, parseISO } from 'date-fns';
@@ -616,6 +616,10 @@ function AIRecipeGenerator({ onSave, onCancel }) {
   const savedKey = provider === 'anthropic' ? appSettings?.anthropicKey : appSettings?.openaiKey;
   const keyPlaceholder = provider === 'anthropic' ? 'sk-ant-...' : 'sk-...';
 
+  useEffect(() => {
+    if (savedKey && !apiKey) setApiKey(savedKey);
+  }, [savedKey]);
+
   const handleGenerate = async () => {
     const key = apiKey.trim() || savedKey;
     if (!key) {
@@ -708,7 +712,7 @@ function AIRecipeGenerator({ onSave, onCancel }) {
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <input
                 type={showKey ? 'text' : 'password'}
-                value={apiKey || (savedKey ? '••••••••' : '')}
+                value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder={savedKey ? 'Key saved — click to change' : keyPlaceholder}
                 style={{ flex: 1 }}
