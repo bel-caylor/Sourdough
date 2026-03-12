@@ -104,7 +104,7 @@ export function selectRatioForWindow(hoursAvailable, tempF) {
  * }}
  */
 export function planBuildPlacement(nextActionAt, tempF, ctx, mode) {
-  const { wakeTime, sleepTime } = ctx;
+  const { wakeTime, sleepTime, notBefore } = ctx;
   const candidates = [];
 
   // ── Candidate generation ──────────────────────────────────────
@@ -129,6 +129,8 @@ export function planBuildPlacement(nextActionAt, tempF, ctx, mode) {
       if (_isDuringSleep(candidateBuildAt, sleepTime, wakeTime)) continue;
       // Don't reach back more than 4 days
       if (nextActionAt - candidateBuildAt > 4 * 24 * 3600000) continue;
+      // Don't place steps before the earliest allowed time (e.g. "now")
+      if (notBefore && candidateBuildAt < notBefore) continue;
 
       for (const { ratio } of RATIO_OPTIONS) {
         const peakW = estimatePeakWindow(ratio, tempF);

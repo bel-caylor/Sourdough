@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
-import { useStarters, useRecipes, addBakePlan } from '../hooks/useData';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useStarters, useRecipes, addBakePlan, useStarterFeedings, useBakePlans } from '../hooks/useData';
 import { generateBakePlan } from '../planner/generateBakePlan.js';
 import { STEP_LABELS } from '../planner/constants.js';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { Link } from 'react-router-dom';
 
 const DEFAULT_FORM = {
@@ -20,14 +20,59 @@ const DEFAULT_FORM = {
 };
 
 export default function GoalsPage() {
-  const starters = useStarters();
-  const recipes = useRecipes();
   const [view, setView] = useState('form'); // 'form' | 'preview'
   const [form, setForm] = useState({ ...DEFAULT_FORM });
   const [preview, setPreview] = useState(null); // { steps, assumptions }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+
+  const starters = useStarters();
+  const recipes = useRecipes();
+  const bakePlans = useBakePlans();
+  const starterFeedings = useStarterFeedings(form.starterId);
+
+  // Pre-fill from most recent bake plan (runs once when plans first load)
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || !bakePlans?.length) return;
+    seeded.current = true;
+    const last = bakePlans[0];
+
+    // Date = 2 days from now; time = same time as last plan's bake
+    let targetBakeAt = '';
+    if (last.targetBakeAt) {
+      const twoDaysOut = new Date();
+      twoDaysOut.setDate(twoDaysOut.getDate() + 2);
+      const dateStr = format(twoDaysOut, 'yyyy-MM-dd');
+      const lastTime = new Date(last.targetBakeAt);
+      const h = lastTime.getHours();
+      const m = lastTime.getMinutes();
+      const snappedM = m < 15 ? '00' : m < 45 ? '30' : '00';
+      const snappedH = m >= 45 ? String(h + 1).padStart(2, '0') : String(h).padStart(2, '0');
+      targetBakeAt = `${dateStr}T${snappedH}:${snappedM}`;
+    }
+
+    setForm(f => ({
+      ...f,
+      starterId: last.starterId || f.starterId,
+      roomTempDay: last.roomTempDay ?? f.roomTempDay,
+      roomTempNight: last.roomTempNight ?? f.roomTempNight,
+      wakeTime: last.wakeTime || f.wakeTime,
+      sleepTime: last.sleepTime || f.sleepTime,
+      ...(targetBakeAt && { targetBakeAt }),
+    }));
+  }, [bakePlans]);
+
+  // Most recent feeding within the last 24h for this starter
+  const recentFeed = useMemo(() => {
+    if (!starterFeedings || !form.starterId) return null;
+    const now = new Date();
+    return starterFeedings.find(f => {
+      const h = (now - new Date(f.fedAt)) / 3600000;
+      return h >= 0 && h < 24;
+    }) ?? null;
+  }, [starterFeedings, form.starterId]);
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -69,10 +114,27 @@ export default function GoalsPage() {
     if (!form.targetBakeAt) { setError('Target bake date/time is required.'); return; }
     if (!form.starterId) { setError('Please select a starter.'); return; }
 
+    const bakeDate = new Date(form.targetBakeAt);
+    if (form.mixDoughAt && new Date(form.mixDoughAt) >= bakeDate) {
+      setError('Mix dough time must be before your target bake time.');
+      return;
+    }
+    if (form.shapeAt && new Date(form.shapeAt) >= bakeDate) {
+      setError('Shape time must be before your target bake time.');
+      return;
+    }
+    if (form.mixDoughAt && form.shapeAt && new Date(form.mixDoughAt) >= new Date(form.shapeAt)) {
+      setError('Mix dough time must be before shape time.');
+      return;
+    }
+
     try {
+      const starter = starters?.find(s => s.id === form.starterId);
       const result = generateBakePlan({
         targetBakeAt: new Date(form.targetBakeAt).toISOString(),
         starterAgeDays,
+        starterLastFedAt: starter?.lastFedAt ?? null,
+        starterLastFeedData: recentFeed ?? null,
         totalStarterNeeded,
         totalFlourGrams,
         roomTempDay: Number(form.roomTempDay),
@@ -167,12 +229,7 @@ export default function GoalsPage() {
           </Field>
 
           <Field label="Target Bake Date & Time *">
-            <input
-              type="datetime-local"
-              value={form.targetBakeAt}
-              onChange={e => set('targetBakeAt', e.target.value)}
-              style={inputStyle}
-            />
+            <DateTimeSelect value={form.targetBakeAt} onChange={v => set('targetBakeAt', v)} />
           </Field>
 
           <Field label="Starter *">
@@ -227,20 +284,10 @@ export default function GoalsPage() {
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
               <Field label="Mix Dough At">
-                <input
-                  type="datetime-local"
-                  value={form.mixDoughAt}
-                  onChange={e => set('mixDoughAt', e.target.value)}
-                  style={inputStyle}
-                />
+                <DateTimeSelect value={form.mixDoughAt} onChange={v => set('mixDoughAt', v)} />
               </Field>
               <Field label="Shape At (bulk end)">
-                <input
-                  type="datetime-local"
-                  value={form.shapeAt}
-                  onChange={e => set('shapeAt', e.target.value)}
-                  style={inputStyle}
-                />
+                <DateTimeSelect value={form.shapeAt} onChange={v => set('shapeAt', v)} />
               </Field>
             </div>
             {form.mixDoughAt && form.shapeAt && totalFlourGrams > 0 && (() => {
@@ -318,7 +365,7 @@ export default function GoalsPage() {
 }
 
 // ── Schedule Preview ───────────────────────────────────────────────
-function SchedulePreview({ preview, form, starters, selectedRecipes, totalStarterNeeded, starterAgeDays, saved, saving, error, onBack, onSave }) {
+function SchedulePreview({ preview, form, starters, totalStarterNeeded, starterAgeDays, saved, saving, error, onBack, onSave }) {
   const starter = starters?.find(s => s.id === form.starterId);
 
   return (
@@ -498,6 +545,61 @@ function Chip({ label, value }) {
     <div style={{ fontSize: '0.8rem', color: 'var(--ash)', background: 'var(--warm-white)', border: '1px solid var(--crumb)', borderRadius: '8px', padding: '4px 12px' }}>
       <span style={{ color: 'var(--mist)' }}>{label}: </span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+// Generates all half-hour time options as "HH:MM" strings
+const HALF_HOUR_TIMES = Array.from({ length: 48 }, (_, i) => {
+  const h = Math.floor(i / 2).toString().padStart(2, '0');
+  const m = i % 2 === 0 ? '00' : '30';
+  const label = (() => {
+    const hour = Math.floor(i / 2);
+    const ampm = hour < 12 ? 'AM' : 'PM';
+    const h12 = hour % 12 || 12;
+    return `${h12}:${m} ${ampm}`;
+  })();
+  return { value: `${h}:${m}`, label };
+});
+
+function DateTimeSelect({ value, onChange }) {
+  const [datePart, timePart] = value ? value.split('T') : ['', ''];
+  // Snap timePart to nearest 30-min slot
+  const snappedTime = useMemo(() => {
+    if (!timePart) return '';
+    const [h, m] = timePart.split(':').map(Number);
+    const snapped = m < 15 ? '00' : m < 45 ? '30' : '00';
+    const snappedH = m >= 45 ? String(h + 1).padStart(2, '0') : String(h).padStart(2, '0');
+    return `${snappedH}:${snapped}`;
+  }, [timePart]);
+
+  const handleDate = (e) => {
+    const d = e.target.value;
+    onChange(d && snappedTime ? `${d}T${snappedTime}` : d ? `${d}T` : '');
+  };
+  const handleTime = (e) => {
+    const t = e.target.value;
+    onChange(datePart && t ? `${datePart}T${t}` : '');
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: '8px' }}>
+      <input
+        type="date"
+        value={datePart || ''}
+        onChange={handleDate}
+        style={{ ...inputStyle, flex: '1 1 auto' }}
+      />
+      <select
+        value={snappedTime || ''}
+        onChange={handleTime}
+        style={{ ...inputStyle, flex: '0 0 auto', width: 'auto' }}
+      >
+        <option value="">Time…</option>
+        {HALF_HOUR_TIMES.map(({ value: v, label }) => (
+          <option key={v} value={v}>{label}</option>
+        ))}
+      </select>
     </div>
   );
 }

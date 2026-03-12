@@ -3,6 +3,9 @@ import {
   INOCULATION_CONSTANT,
   MIN_COLD_PROOF_HOURS,
   STEP_DURATION_MINUTES,
+  DEFAULT_REFRESH_RATIO,
+  OVERPEAK_RISK_HOURS,
+  RATIO_OPTIONS,
 } from './constants.js';
 import { accumulateFermentation } from './fermentationRates.js';
 import { feedsNeeded, recoveryNote } from './starterRecoveryModel.js';
@@ -58,6 +61,14 @@ function shiftBeforeSleep(dt, sleepTime, wakeTime) {
   result.setHours(sh, sm, 0, 0);
   if (result > dt) result.setDate(result.getDate() - 1);
   return { dt: result, shifted: true };
+}
+
+function nextWakeTime(afterDate, wakeTime) {
+  const result = new Date(afterDate);
+  const [wh, wm] = wakeTime.split(':').map(Number);
+  result.setHours(wh, wm, 0, 0);
+  if (result <= afterDate) result.setDate(result.getDate() + 1);
+  return result;
 }
 
 function prevSleepStart(beforeDate, sleepTime) {
@@ -154,6 +165,8 @@ function removeFridgeNote(isLevain) {
  * @param {{
  *   targetBakeAt: string,
  *   starterAgeDays: number,
+ *   starterLastFedAt?: string,
+ *   starterLastFeedData?: { starterKeptGrams: number, flourGrams: number, waterGrams: number },
  *   totalStarterNeeded: number,
  *   totalFlourGrams?: number,
  *   roomTempDay: number,
@@ -170,6 +183,8 @@ export function generateBakePlan(params) {
   const {
     targetBakeAt,
     starterAgeDays,
+    starterLastFedAt,
+    starterLastFeedData,
     totalStarterNeeded: totalStarterNeededInput,
     totalFlourGrams,
     roomTempDay,
@@ -184,7 +199,8 @@ export function generateBakePlan(params) {
   const steps = [];
   const tempConfig = { wakeTime, sleepTime, dayTempF: roomTempDay, nightTempF: roomTempNight };
   const avgDayTemp = roomTempDay;
-  const ctx = { wakeTime, sleepTime };
+  const now = new Date();
+  const ctx = { wakeTime, sleepTime, notBefore: now };
 
   // ── 1. Bake ──────────────────────────────────────────────────────
   const bakeAt = roundTo15(new Date(targetBakeAt));
@@ -241,6 +257,9 @@ export function generateBakePlan(params) {
     const mixDoughFixed = roundTo15(new Date(mixDoughAtInput));
     bulkStartAt = addMinutes(mixDoughFixed, STEP_DURATION_MINUTES.mix_dough);
     bulkHours = (shapeAt - bulkStartAt) / (60 * 60 * 1000);
+    if (bulkHours <= 0) {
+      throw new Error('Mix dough time must be before your shape / bake time.');
+    }
 
     if (totalFlourGrams && totalFlourGrams > 0) {
       const bulkHoursBaseline = bulkHours * rateForTemp(roomTempDay);
@@ -365,66 +384,155 @@ export function generateBakePlan(params) {
     return { steps, assumptions, inoculationPercent, totalStarterNeeded };
   }
 
-  // Collect placements working backward from levain build.
-  // reversePlacements[0] = feed closest to levain (newest)
-  // reversePlacements[numFeeds-1] = oldest feed
-  const reversePlacements = [];
-  let cursor = levainBuildAt;
-  for (let i = 0; i < numFeeds; i++) {
-    const placement = planBuildPlacement(cursor, avgDayTemp, ctx, 'recovery');
-    reversePlacements.push(placement);
-    cursor = roundTo15(placement.buildAt);
+  // If the starter was fed within the last 24h, treat that actual feed as the
+  // starter_refresh step rather than scheduling a new one in the past.
+  let alreadyFedAt = null;
+  if (starterLastFedAt) {
+    const lastFed = new Date(starterLastFedAt);
+    const hoursSinceFed = (now - lastFed) / 3600000;
+    if (hoursSinceFed >= 0 && hoursSinceFed < 24) alreadyFedAt = lastFed;
   }
 
-  // Compute gram amounts (working backward from levain's seed requirement)
-  // reversePlacements[0] = newest feed → produces seed for levain
-  // reversePlacements[numFeeds-1] = oldest feed → its seed comes from the jar
-  let seedNeededForNext = levainGrams.seedStarterGrams;
-  for (let i = 0; i < numFeeds; i++) {
-    const feedGrams = calcBuildStep(seedNeededForNext, reversePlacements[i].ratio, 1.2);
-    reversePlacements[i].chainData = feedGrams;
-    seedNeededForNext = feedGrams.seedStarterGrams;
-  }
-
-  // Emit steps in chronological order (oldest first = reversePlacements[numFeeds-1] first)
   const refreshSteps = [];
-  for (let i = numFeeds - 1; i >= 0; i--) {
-    const placement = reversePlacements[i];
-    const grams = placement.chainData;
-    // Oldest feed = starter_refresh; intervening feeds = strengthening_feed
-    const stepType = i === numFeeds - 1 ? 'starter_refresh' : 'strengthening_feed';
+
+  if (alreadyFedAt) {
+    // Credit the actual morning feed as the starter_refresh.
+    // Use real feed amounts if available, otherwise fall back to estimates.
+    let feedGrams, estRatio, feedNote;
+
+    if (starterLastFeedData?.starterKeptGrams > 0) {
+      const { starterKeptGrams, flourGrams: actualFlour, waterGrams: actualWater } = starterLastFeedData;
+      const totalBuildGrams = starterKeptGrams + actualFlour + actualWater;
+      const gramsUsedForNextStep = levainGrams.seedStarterGrams;
+
+      // Find the closest RATIO_OPTIONS entry by flour multiplier for peak estimation
+      const flourMult = actualFlour / starterKeptGrams;
+      estRatio = RATIO_OPTIONS.reduce((best, opt) => {
+        const [, f] = opt.ratio.split(':').map(Number);
+        const [, bf] = best.split(':').map(Number);
+        return Math.abs(f - flourMult) < Math.abs(bf - flourMult) ? opt.ratio : best;
+      }, RATIO_OPTIONS[0].ratio);
+
+      const rf = Math.round(actualFlour / starterKeptGrams * 10) / 10;
+      const rw = Math.round(actualWater / starterKeptGrams * 10) / 10;
+      feedGrams = {
+        ratio: `1:${rf}:${rw}`,
+        seedStarterGrams: starterKeptGrams,
+        flourGrams: actualFlour,
+        waterGrams: actualWater,
+        totalBuildGrams,
+        gramsUsedForNextStep,
+        gramsReserved: Math.max(0, totalBuildGrams - gramsUsedForNextStep),
+      };
+      feedNote = (peakAt) => `You already did this feed. Starter expected to peak around ${formatTime(peakAt)}.`;
+    } else {
+      estRatio = DEFAULT_REFRESH_RATIO;
+      feedGrams = calcBuildStep(levainGrams.seedStarterGrams, estRatio, 1.2);
+      feedNote = (peakAt) => `You already did this feed. Grams shown are estimates — use what you actually mixed. Starter expected to peak around ${formatTime(peakAt)}.`;
+    }
+
+    const peakW = estimatePeakWindow(estRatio, avgDayTemp);
+    const peakAt = new Date(alreadyFedAt.getTime() + peakW.midHours * 3600000);
+    const leadHoursToLevain = (levainBuildAt - peakAt) / 3600000;
 
     refreshSteps.push({
-      stepType,
-      plannedAt: roundTo15(placement.buildAt).toISOString(),
+      stepType: 'starter_refresh',
+      plannedAt: roundTo15(alreadyFedAt).toISOString(),
       inputs: {
-        ratio: placement.ratio,
-        seedStarterGrams: grams.seedStarterGrams,
-        flourGrams: grams.flourGrams,
-        waterGrams: grams.waterGrams,
-        totalBuildGrams: grams.totalBuildGrams,
-        gramsUsedForNextStep: grams.gramsUsedForNextStep,
-        gramsReserved: grams.gramsReserved,
-        gramsReturnedToFridge: 0,
-        expectedPeakHours: Math.round(placement.peakWindow.midHours * 10) / 10,
+        ratio: feedGrams.ratio,
+        seedStarterGrams: feedGrams.seedStarterGrams,
+        flourGrams: feedGrams.flourGrams,
+        waterGrams: feedGrams.waterGrams,
+        totalBuildGrams: feedGrams.totalBuildGrams,
+        gramsUsedForNextStep: feedGrams.gramsUsedForNextStep,
+        gramsReserved: feedGrams.gramsReserved,
+        expectedPeakHours: Math.round(peakW.midHours * 10) / 10,
       },
-      notes: recoveryFeedNote(placement, grams, stepType, avgDayTemp),
+      notes: feedNote(peakAt),
     });
+    assumptions.push(`Starter refresh: used your actual feed at ${formatTime(alreadyFedAt)} — no additional refresh needed.`);
 
-    if (placement.refrig) {
+    if (leadHoursToLevain > OVERPEAK_RISK_HOURS) {
+      // Starter will be well past peak by levain build — refrigerate.
+      const refrigerateAt = roundTo15(new Date(Math.max(peakAt.getTime(), now.getTime())));
+      const removeAt = roundTo15(new Date(Math.max(
+        nextWakeTime(refrigerateAt, wakeTime).getTime(),
+        levainBuildAt.getTime() - 30 * 60 * 1000,
+      )));
+      const warmH = Math.round((refrigerateAt - alreadyFedAt) / 3600000 * 10) / 10;
+      const reason = `Peaked ~${Math.round(leadHoursToLevain)}h before levain build — refrigerate at peak to pause fermentation.`;
       refreshSteps.push({
         stepType: 'refrigerate_starter',
-        plannedAt: roundTo15(placement.refrig.refrigerateAt).toISOString(),
-        inputs: { targetStep: stepType },
-        notes: refrigNote(placement, false),
+        plannedAt: refrigerateAt.toISOString(),
+        inputs: {},
+        notes: `Refrigerate the starter after ~${warmH}h of room-temperature fermentation. ${reason}`,
       });
       refreshSteps.push({
         stepType: 'remove_from_fridge',
-        plannedAt: roundTo15(placement.refrig.removeAt).toISOString(),
-        inputs: { targetStep: stepType },
+        plannedAt: removeAt.toISOString(),
+        inputs: {},
         notes: removeFridgeNote(false),
       });
-      assumptions.push(`Starter refrigeration: ${placement.refrig.reason}`);
+      assumptions.push(`Starter refrigeration: ${reason}`);
+    }
+
+  } else {
+    // Normal case: generate feeds placed in the future (notBefore = now via ctx).
+    // Collect placements working backward from levain build.
+    const reversePlacements = [];
+    let cursor = levainBuildAt;
+    for (let i = 0; i < numFeeds; i++) {
+      const placement = planBuildPlacement(cursor, avgDayTemp, ctx, 'recovery');
+      reversePlacements.push(placement);
+      cursor = roundTo15(placement.buildAt);
+    }
+
+    // Compute gram amounts working backward from levain's seed requirement.
+    let seedNeededForNext = levainGrams.seedStarterGrams;
+    for (let i = 0; i < numFeeds; i++) {
+      const feedGrams = calcBuildStep(seedNeededForNext, reversePlacements[i].ratio, 1.2);
+      reversePlacements[i].chainData = feedGrams;
+      seedNeededForNext = feedGrams.seedStarterGrams;
+    }
+
+    // Emit steps chronologically (oldest first = reversePlacements[numFeeds-1] first).
+    for (let i = numFeeds - 1; i >= 0; i--) {
+      const placement = reversePlacements[i];
+      const grams = placement.chainData;
+      const stepType = i === numFeeds - 1 ? 'starter_refresh' : 'strengthening_feed';
+
+      refreshSteps.push({
+        stepType,
+        plannedAt: roundTo15(placement.buildAt).toISOString(),
+        inputs: {
+          ratio: placement.ratio,
+          seedStarterGrams: grams.seedStarterGrams,
+          flourGrams: grams.flourGrams,
+          waterGrams: grams.waterGrams,
+          totalBuildGrams: grams.totalBuildGrams,
+          gramsUsedForNextStep: grams.gramsUsedForNextStep,
+          gramsReserved: grams.gramsReserved,
+          gramsReturnedToFridge: 0,
+          expectedPeakHours: Math.round(placement.peakWindow.midHours * 10) / 10,
+        },
+        notes: recoveryFeedNote(placement, grams, stepType, avgDayTemp),
+      });
+
+      if (placement.refrig) {
+        refreshSteps.push({
+          stepType: 'refrigerate_starter',
+          plannedAt: roundTo15(placement.refrig.refrigerateAt).toISOString(),
+          inputs: { targetStep: stepType },
+          notes: refrigNote(placement, false),
+        });
+        refreshSteps.push({
+          stepType: 'remove_from_fridge',
+          plannedAt: roundTo15(placement.refrig.removeAt).toISOString(),
+          inputs: { targetStep: stepType },
+          notes: removeFridgeNote(false),
+        });
+        assumptions.push(`Starter refrigeration: ${placement.refrig.reason}`);
+      }
     }
   }
 

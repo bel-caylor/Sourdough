@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { useRecipes, addRecipe, updateRecipe, deleteRecipe } from '../hooks/useData';
+import { useState, useEffect } from 'react';
+import { useRecipes, addRecipe, updateRecipe, deleteRecipe, useAppSettings } from '../hooks/useData';
+import { generateRecipe } from '../lib/ai';
 import { format, parseISO } from 'date-fns';
 
 const RECIPE_CATEGORIES = [
@@ -229,6 +230,7 @@ function RecipeDetail({ recipe, onBack, onEdit, onDelete }) {
 // ── Recipe Form ───────────────────────────────────────────────────
 function RecipeForm({ initial, onSave, onCancel }) {
   const isEdit = Boolean(initial?.id);
+  const appSettings = useAppSettings();
   const [form, setForm] = useState(() => initial ? {
     name: initial.name || '',
     category: initial.category || 'Classic Sourdough Boule',
@@ -242,6 +244,61 @@ function RecipeForm({ initial, onSave, onCancel }) {
   } : { ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiFields, setAiFields] = useState({ style: '', ingredients: '', suggestions: '', apiKey: '', provider: 'anthropic' });
+
+  // Sync API key from saved settings whenever settings load
+  useEffect(() => {
+    if (!appSettings) return;
+    setAiFields(f => ({
+      ...f,
+      apiKey: f.apiKey || (f.provider === 'openai' ? appSettings.openaiKey : appSettings.anthropicKey) || '',
+    }));
+  }, [appSettings]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+
+  const setAi = (field, value) => setAiFields(f => {
+    const next = { ...f, [field]: value };
+    if (field === 'provider' && appSettings) {
+      next.apiKey = (value === 'openai' ? appSettings.openaiKey : appSettings.anthropicKey) || '';
+    }
+    return next;
+  });
+
+  const handleGenerate = async () => {
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const result = await generateRecipe({ ...aiFields });
+      // Map AI response ingredients to form fields
+      const ing = result.ingredients || [];
+      const find = (...names) => ing.find(i => names.some(n => i.name?.toLowerCase().includes(n)));
+      const flourIng = find('flour');
+      const waterIng = find('water');
+      const saltIng = find('salt');
+      const starterIng = find('starter', 'levain');
+      const addInItems = ing
+        .filter(i => i !== flourIng && i !== waterIng && i !== saltIng && i !== starterIng)
+        .map(i => ({ name: i.name, grams: i.unit === 'g' ? String(i.amount) : '' }));
+
+      setForm(f => ({
+        ...f,
+        name: result.name || f.name,
+        flourGrams: flourIng?.amount ? String(flourIng.amount) : f.flourGrams,
+        waterGrams: waterIng?.amount ? String(waterIng.amount) : f.waterGrams,
+        saltGrams: saltIng?.amount ? String(saltIng.amount) : f.saltGrams,
+        starterGramsTarget: starterIng?.amount ? String(starterIng.amount) : f.starterGramsTarget,
+        addIns: addInItems.length ? addInItems : f.addIns,
+        notes: result.notes || f.notes,
+      }));
+      setAiOpen(false);
+    } catch (e) {
+      setAiError(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -295,6 +352,47 @@ function RecipeForm({ initial, onSave, onCancel }) {
           {isEdit ? 'Edit Recipe' : 'New Recipe'}
         </h2>
       </div>
+
+      {!isEdit && (
+        <div style={{ marginBottom: '14px' }}>
+          <button
+            type="button"
+            onClick={() => { setAiOpen(o => !o); setAiError(''); }}
+            style={{ ...secondaryBtnStyle, fontSize: '0.82rem', color: 'var(--crust)', borderColor: 'var(--crust)' }}
+          >
+            {aiOpen ? '✕ Close AI Generator' : '✦ Generate with AI'}
+          </button>
+          {aiOpen && (
+            <div className="card" style={{ padding: '20px', marginTop: '12px', background: 'var(--cream)' }}>
+              <p style={{ fontSize: '0.78rem', fontWeight: '600', color: 'var(--mist)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '14px' }}>AI Recipe Generator</p>
+              <Field label="Style / Type">
+                <input type="text" value={aiFields.style} onChange={e => setAi('style', e.target.value)} placeholder="e.g. rustic country boule, rye sandwich loaf" style={inputStyle} />
+              </Field>
+              <Field label="Key Ingredients or Inclusions">
+                <input type="text" value={aiFields.ingredients} onChange={e => setAi('ingredients', e.target.value)} placeholder="e.g. 20% rye, sesame seeds, rosemary" style={inputStyle} />
+              </Field>
+              <Field label="Preferences / Notes">
+                <input type="text" value={aiFields.suggestions} onChange={e => setAi('suggestions', e.target.value)} placeholder="e.g. same-day bake, high hydration, 1 loaf" style={inputStyle} />
+              </Field>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: '12px' }}>
+                <Field label="API Key">
+                  <input type="password" value={aiFields.apiKey} onChange={e => setAi('apiKey', e.target.value)} placeholder="sk-..." style={inputStyle} />
+                </Field>
+                <Field label="Provider">
+                  <select value={aiFields.provider} onChange={e => setAi('provider', e.target.value)} style={inputStyle}>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </Field>
+              </div>
+              {aiError && <p style={{ color: 'var(--alert)', fontSize: '0.82rem', marginBottom: '12px' }}>{aiError}</p>}
+              <button type="button" className="btn-primary" onClick={handleGenerate} disabled={aiLoading}>
+                {aiLoading ? 'Generating…' : 'Generate Recipe'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <form className="card" style={{ padding: '28px' }} onSubmit={handleSubmit}>
         <Field label="Recipe Name *">

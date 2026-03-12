@@ -328,6 +328,39 @@ export async function deleteStarter(id) {
   return deleteDoc(userDoc(uid, 'starters', id));
 }
 
+// ── Starter Feedings ──────────────────────────────────────────────
+export function useStarterFeedings(starterId) {
+  const { user } = useAuth();
+  const [data, setData] = useState(undefined);
+
+  useEffect(() => {
+    if (!user || !starterId) { setData([]); return; }
+    const q = query(
+      collection(db, 'users', user.uid, 'starters', starterId, 'feedings'),
+      orderBy('fedAt', 'desc'),
+      limit(20)
+    );
+    return onSnapshot(q, snap => {
+      setData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => setData([]));
+  }, [user?.uid, starterId]);
+
+  return data;
+}
+
+export async function addStarterFeeding(starterId, data) {
+  const uid = getUid();
+  await addDoc(
+    collection(db, 'users', uid, 'starters', starterId, 'feedings'),
+    { ...data, createdAt: new Date().toISOString() }
+  );
+  // Stamp the parent starter so lastFedAt stays fresh
+  await updateDoc(userDoc(uid, 'starters', starterId), {
+    lastFedAt: data.fedAt,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 // ── Bake Plans ────────────────────────────────────────────────────
 export function useBakePlans() {
   const { user } = useAuth();
