@@ -1,248 +1,271 @@
 import { useState } from 'react';
-import { useBakingSessions, createBakingSession, advanceStage, completeSession } from '../hooks/useData';
-import { format, parseISO } from 'date-fns';
+import { useBakePlans, updateBakePlan, deleteBakePlan } from '../hooks/useData';
+import { ScheduleTimeline } from './GoalsPage.jsx';
+import { STEP_LABELS } from '../planner/constants.js';
+import { format, isFuture } from 'date-fns';
+import { Link } from 'react-router-dom';
+
+const STATUS_STYLES = {
+  active:   { label: 'Active',    color: 'var(--rise)',  bg: 'var(--rise-light)' },
+  draft:    { label: 'Draft',     color: 'var(--mist)',  bg: 'var(--cream)' },
+  complete: { label: 'Complete',  color: '#5563A8',      bg: '#EEF0F8' },
+};
 
 export default function BakingPage() {
-  const sessions = useBakingSessions();
-  const [showNew, setShowNew] = useState(false);
+  const plans = useBakePlans();
+  const [selected, setSelected] = useState(null);
 
-  const active = sessions?.filter(s => s.stage !== -1) || [];
-  const completed = sessions?.filter(s => s.stage === -1) || [];
+  const handleDelete = async (plan) => {
+    if (!confirm(`Delete "${plan.title}"? This cannot be undone.`)) return;
+    await deleteBakePlan(plan.id);
+    if (selected?.id === plan.id) setSelected(null);
+  };
+
+  const handleStatusChange = async (plan, status) => {
+    await updateBakePlan(plan.id, { status });
+    if (selected?.id === plan.id) setSelected(p => ({ ...p, status }));
+  };
+
+  if (selected) {
+    return (
+      <PlanDetail
+        plan={selected}
+        onBack={() => setSelected(null)}
+        onDelete={() => handleDelete(selected)}
+        onStatusChange={(s) => handleStatusChange(selected, s)}
+      />
+    );
+  }
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}>
+    <div style={{ animation: 'fadeUp 0.5s ease' }}>
+      <div className="mb-8" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h2 className="serif" style={{ fontSize: '2rem' }}>Baking Process</h2>
-          <p style={{ color: 'var(--mist)', marginTop: '4px' }}>Step-by-step guides for active bakes</p>
+          <h2 className="serif" style={{ fontSize: '2rem', color: 'var(--char)' }}>Bake Plans</h2>
+          <p style={{ color: 'var(--mist)', marginTop: '4px' }}>Your saved baking schedules.</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowNew(!showNew)}>
-          {showNew ? 'Cancel' : '+ Start a Bake'}
-        </button>
+        <Link to="/goals">
+          <button className="btn-primary">+ Plan a Bake</button>
+        </Link>
       </div>
 
-      {showNew && <NewBakeForm onSave={() => setShowNew(false)} />}
+      {plans === undefined ? (
+        <LoadingState />
+      ) : plans.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <>
+          {/* Active plans first */}
+          {plans.filter(p => p.status === 'active').length > 0 && (
+            <div style={{ marginBottom: '32px' }}>
+              <SectionHeader>Active Plans</SectionHeader>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {plans.filter(p => p.status === 'active').map(p => (
+                  <PlanCard key={p.id} plan={p} onSelect={() => setSelected(p)} onDelete={() => handleDelete(p)} />
+                ))}
+              </div>
+            </div>
+          )}
 
-      {active.length === 0 && !showNew && (
-        <div className="card" style={{ padding: '40px', textAlign: 'center', color: 'var(--mist)', marginBottom: '32px' }}>
-          <div style={{ fontSize: '2rem', marginBottom: '8px' }}>◈</div>
-          <p style={{ marginBottom: '4px' }}>No active bakes.</p>
-          <p style={{ fontSize: '0.8rem' }}>Start a bake to get step-by-step guidance.</p>
-        </div>
-      )}
+          {/* Draft plans */}
+          {plans.filter(p => p.status === 'draft').length > 0 && (
+            <div style={{ marginBottom: '32px' }}>
+              <SectionHeader>Drafts</SectionHeader>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {plans.filter(p => p.status === 'draft').map(p => (
+                  <PlanCard key={p.id} plan={p} onSelect={() => setSelected(p)} onDelete={() => handleDelete(p)} />
+                ))}
+              </div>
+            </div>
+          )}
 
-      {active.length > 0 && (
-        <div style={{ marginBottom: '40px' }}>
-          <h3 className="serif" style={{ fontSize: '1.2rem', marginBottom: '16px', color: 'var(--ash)' }}>
-            Active Bakes
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {active.map(s => <BakeSession key={s.id} session={s} />)}
-          </div>
-        </div>
-      )}
-
-      {completed.length > 0 && (
-        <div>
-          <h3 className="serif" style={{ fontSize: '1.2rem', marginBottom: '16px', color: 'var(--mist)' }}>
-            Completed Bakes
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {completed.map(s => <CompletedBakeRow key={s.id} session={s} />)}
-          </div>
-        </div>
+          {/* Complete plans */}
+          {plans.filter(p => p.status === 'complete').length > 0 && (
+            <div>
+              <SectionHeader>Completed</SectionHeader>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {plans.filter(p => p.status === 'complete').map(p => (
+                  <PlanCard key={p.id} plan={p} onSelect={() => setSelected(p)} onDelete={() => handleDelete(p)} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function NewBakeForm({ onSave }) {
-  const [name, setName] = useState('');
-  const handleCreate = async () => {
-    if (!name.trim()) return;
-    await createBakingSession({ recipeName: name });
-    onSave();
-  };
-  return (
-    <div className="card" style={{ padding: '24px', marginBottom: '24px' }}>
-      <h3 className="serif" style={{ fontSize: '1.1rem', marginBottom: '16px' }}>Start a New Bake</h3>
-      <label>Recipe Name</label>
-      <input type="text" value={name} onChange={e => setName(e.target.value)}
-        placeholder="e.g. Country Sourdough, Whole Wheat Levain..." />
-      <div style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
-        <button className="btn-primary" onClick={handleCreate}>Start Bake</button>
-        <button className="btn-secondary" onClick={onSave}>Cancel</button>
-      </div>
-      <p style={{ fontSize: '0.75rem', color: 'var(--mist)', marginTop: '12px' }}>
-        This will start a guided 8-stage sourdough process. You can customize stages later.
-      </p>
-    </div>
-  );
-}
+// ── Plan Card ──────────────────────────────────────────────────────
+function PlanCard({ plan, onSelect, onDelete }) {
+  const statusStyle = STATUS_STYLES[plan.status] || STATUS_STYLES.draft;
+  const bakeAt = plan.targetBakeAt ? new Date(plan.targetBakeAt) : null;
 
-function BakeSession({ session }) {
-  const [showComplete, setShowComplete] = useState(false);
-  const [rating, setRating] = useState(5);
-  const [outcome, setOutcome] = useState('');
-  const [notes, setNotes] = useState('');
-
-  const currentStage = session.stages?.[session.stage];
-  const progress = session.stages?.length
-    ? Math.round((session.stage / session.stages.length) * 100)
-    : 0;
-
-  const handleAdvance = async () => {
-    if (session.stage === session.stages.length - 1) {
-      setShowComplete(true);
-    } else {
-      await advanceStage(session.id);
-    }
-  };
-
-  const handleComplete = async () => {
-    await completeSession(session.id, rating, outcome, notes);
-    setShowComplete(false);
-  };
+  // Find next upcoming step
+  const nextStep = plan.generatedSchedule?.find(s => isFuture(new Date(s.plannedAt)));
 
   return (
-    <div className="card" style={{ padding: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 className="serif" style={{ fontSize: '1.2rem' }}>{session.recipeName}</h3>
-        <span style={{ fontSize: '0.75rem', color: 'var(--mist)' }}>
-          Started {format(parseISO(session.startDate), 'MMM d, h:mma')}
-        </span>
-      </div>
-
-      {/* Progress bar */}
-      <div style={{ marginBottom: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--mist)' }}>
-            Stage {session.stage + 1} of {session.stages?.length}
-          </span>
-          <span style={{ fontSize: '0.75rem', color: 'var(--crust)', fontWeight: '500' }}>
-            {progress}%
-          </span>
-        </div>
-        <div style={{ background: 'var(--crumb)', borderRadius: '999px', height: '6px', overflow: 'hidden' }}>
-          <div style={{
-            width: `${progress}%`, height: '100%',
-            background: 'var(--crust)', borderRadius: '999px',
-            transition: 'width 0.4s ease',
-          }} />
-        </div>
-      </div>
-
-      {/* Stage list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-        {session.stages?.map((stage, i) => (
-          <StageRow key={i} stage={stage} index={i} currentIndex={session.stage} />
-        ))}
-      </div>
-
-      {/* Current stage detail */}
-      {currentStage && !showComplete && (
-        <div style={{ background: 'var(--cream)', borderRadius: '12px', padding: '18px', marginBottom: '16px', borderLeft: '3px solid var(--crust)' }}>
-          <p style={{ fontSize: '0.7rem', color: 'var(--mist)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>
-            Current Step
-          </p>
-          <p style={{ fontWeight: '600', marginBottom: '6px' }}>{currentStage.name}</p>
-          <p style={{ fontSize: '0.85rem', color: 'var(--ash)', lineHeight: '1.6' }}>{currentStage.description}</p>
-          {currentStage.duration && (
-            <p style={{ fontSize: '0.78rem', color: 'var(--crust)', marginTop: '8px', fontWeight: '500' }}>
-              ⏱ {currentStage.duration}
+    <div
+      className="card"
+      style={{ padding: '18px 22px', cursor: 'pointer' }}
+      onClick={onSelect}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px', flexWrap: 'wrap' }}>
+            <h3 className="serif" style={{ fontSize: '1.1rem', color: 'var(--char)' }}>{plan.title}</h3>
+            <span style={{
+              fontSize: '0.7rem', fontWeight: '600', padding: '2px 8px', borderRadius: '999px',
+              color: statusStyle.color, background: statusStyle.bg,
+            }}>
+              {statusStyle.label}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '6px' }}>
+            {bakeAt && (
+              <span style={{ fontSize: '0.8rem', color: 'var(--mist)' }}>
+                Bake: {format(bakeAt, 'EEE, MMM d · h:mm a')}
+              </span>
+            )}
+            {plan.starterName && (
+              <span style={{ fontSize: '0.8rem', color: 'var(--mist)' }}>Starter: {plan.starterName}</span>
+            )}
+            {plan.totalStarterNeeded && (
+              <span style={{ fontSize: '0.8rem', color: 'var(--mist)' }}>{plan.totalStarterNeeded}g starter</span>
+            )}
+          </div>
+          {nextStep && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--crust)', fontWeight: '500' }}>
+              Next: {STEP_LABEL(nextStep.stepType)} at {format(new Date(nextStep.plannedAt), 'EEE h:mm a')}
             </p>
           )}
         </div>
-      )}
-
-      {showComplete ? (
-        <div style={{ background: 'var(--rise-light)', borderRadius: '12px', padding: '18px', marginBottom: '16px' }}>
-          <p className="serif" style={{ fontSize: '1rem', marginBottom: '12px', color: 'var(--rise)' }}>
-            🎉 Mark this bake complete!
-          </p>
-          <div style={{ display: 'grid', gap: '10px' }}>
-            <div>
-              <label>Rating (1–10)</label>
-              <input type="number" min={1} max={10} value={rating} onChange={e => setRating(+e.target.value)} />
-            </div>
-            <div>
-              <label>Outcome / Result</label>
-              <input type="text" value={outcome} onChange={e => setOutcome(e.target.value)} placeholder="Open crumb, good oven spring, slightly dense..." />
-            </div>
-            <div>
-              <label>Notes for next time</label>
-              <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What to do differently..." />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
-            <button className="btn-primary" onClick={handleComplete}>Complete Bake</button>
-            <button className="btn-secondary" onClick={() => setShowComplete(false)}>Back</button>
-          </div>
-        </div>
-      ) : (
-        <button className="btn-primary" onClick={handleAdvance}>
-          {session.stage === session.stages?.length - 1 ? 'Finish Bake →' : `Complete Stage & Continue →`}
+        <button
+          onClick={e => { e.stopPropagation(); onDelete(); }}
+          style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--crumb)', background: 'transparent', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--mist)', flexShrink: 0 }}
+        >
+          Delete
         </button>
-      )}
-    </div>
-  );
-}
-
-function StageRow({ stage, index, currentIndex }) {
-  const isPast = index < currentIndex;
-  const isCurrent = index === currentIndex;
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: '10px',
-      opacity: isPast ? 0.5 : 1,
-    }}>
-      <div style={{
-        width: '22px', height: '22px', borderRadius: '50%', flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '0.65rem', fontWeight: '700',
-        background: isPast ? 'var(--rise)' : isCurrent ? 'var(--crust)' : 'var(--crumb)',
-        color: isPast || isCurrent ? 'white' : 'var(--mist)',
-        border: isCurrent ? '2px solid var(--crust)' : 'none',
-      }}>
-        {isPast ? '✓' : index + 1}
       </div>
-      <span style={{
-        fontSize: '0.82rem',
-        fontWeight: isCurrent ? '600' : '400',
-        color: isCurrent ? 'var(--char)' : 'var(--mist)',
-      }}>
-        {stage.name}
-      </span>
     </div>
   );
 }
 
-function CompletedBakeRow({ session }) {
+// ── Plan Detail ───────────────────────────────────────────────────
+function PlanDetail({ plan, onBack, onDelete, onStatusChange }) {
+  const statusStyle = STATUS_STYLES[plan.status] || STATUS_STYLES.draft;
+  const bakeAt = plan.targetBakeAt ? new Date(plan.targetBakeAt) : null;
+
   return (
-    <div className="card" style={{ padding: '16px 20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div style={{ animation: 'fadeUp 0.5s ease', maxWidth: '680px' }}>
+      <div className="mb-6" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mist)', fontSize: '0.85rem' }}>
+          ← Bake Plans
+        </button>
+      </div>
+
+      <div className="mb-6" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <span style={{ fontWeight: '600', fontFamily: 'Playfair Display, serif' }}>{session.recipeName}</span>
-          {session.outcome && (
-            <p style={{ fontSize: '0.78rem', color: 'var(--mist)', marginTop: '3px' }}>{session.outcome}</p>
-          )}
+          <h2 className="serif" style={{ fontSize: '1.6rem', color: 'var(--char)' }}>{plan.title}</h2>
+          {bakeAt && <p style={{ color: 'var(--mist)', fontSize: '0.875rem', marginTop: '2px' }}>Bake: {format(bakeAt, 'EEEE, MMMM d · h:mm a')}</p>}
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          {session.rating && (
-            <div style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--crust)' }}>
-              {session.rating}/10
-            </div>
-          )}
-          <div style={{ fontSize: '0.72rem', color: 'var(--mist)' }}>
-            {format(parseISO(session.startDate), 'MMM d')}
-          </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.75rem', fontWeight: '600', padding: '3px 10px', borderRadius: '999px', color: statusStyle.color, background: statusStyle.bg }}>
+            {statusStyle.label}
+          </span>
         </div>
       </div>
-      {session.notes && (
-        <p style={{ fontSize: '0.78rem', color: 'var(--ash)', marginTop: '6px', fontStyle: 'italic', borderTop: '1px solid var(--crumb)', paddingTop: '8px' }}>
-          Notes: {session.notes}
-        </p>
+
+      {/* Summary chips */}
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
+        {plan.starterName && <Chip label="Starter" value={plan.starterName} />}
+        {plan.starterAgeDays !== undefined && <Chip label="Starter age" value={`${plan.starterAgeDays}d`} />}
+        {plan.totalStarterNeeded && <Chip label="Starter needed" value={`${plan.totalStarterNeeded}g`} />}
+        {plan.roomTempDay && <Chip label="Day temp" value={`${plan.roomTempDay}°F`} />}
+        {plan.roomTempNight && <Chip label="Night temp" value={`${plan.roomTempNight}°F`} />}
+      </div>
+
+      {/* Schedule */}
+      {plan.generatedSchedule?.length > 0 && (
+        <div className="card" style={{ padding: '24px', marginBottom: '20px' }}>
+          <h3 className="serif" style={{ fontSize: '1.1rem', marginBottom: '18px' }}>Schedule</h3>
+          <ScheduleTimeline steps={plan.generatedSchedule} />
+        </div>
       )}
+
+      {/* Assumptions */}
+      {plan.assumptions?.length > 0 && (
+        <div className="card" style={{ padding: '20px 24px', marginBottom: '20px' }}>
+          <h3 style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--mist)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '12px' }}>
+            Assumptions & Estimates
+          </h3>
+          <ul style={{ paddingLeft: '0', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {plan.assumptions.map((a, i) => (
+              <li key={i} style={{ fontSize: '0.82rem', color: 'var(--ash)', display: 'flex', gap: '8px' }}>
+                <span style={{ color: 'var(--mist)', flexShrink: 0 }}>—</span>{a}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        {plan.status !== 'active' && (
+          <button onClick={() => onStatusChange('active')} style={secondaryBtnStyle}>Mark Active</button>
+        )}
+        {plan.status !== 'complete' && (
+          <button onClick={() => onStatusChange('complete')} style={secondaryBtnStyle}>Mark Complete</button>
+        )}
+        {plan.status !== 'draft' && (
+          <button onClick={() => onStatusChange('draft')} style={secondaryBtnStyle}>Move to Draft</button>
+        )}
+        <button onClick={onDelete} style={{ ...secondaryBtnStyle, borderColor: 'var(--alert)', color: 'var(--alert)' }}>Delete Plan</button>
+      </div>
     </div>
   );
 }
+
+// ── Helpers ───────────────────────────────────────────────────────
+function STEP_LABEL(stepType) {
+  return STEP_LABELS[stepType]?.label || stepType;
+}
+
+function Chip({ label, value }) {
+  return (
+    <div style={{ fontSize: '0.8rem', color: 'var(--ash)', background: 'var(--warm-white)', border: '1px solid var(--crumb)', borderRadius: '8px', padding: '4px 12px' }}>
+      <span style={{ color: 'var(--mist)' }}>{label}: </span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function SectionHeader({ children }) {
+  return (
+    <p style={{ fontSize: '0.72rem', fontWeight: '600', color: 'var(--mist)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '12px' }}>
+      {children}
+    </p>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="card" style={{ padding: '48px 24px', textAlign: 'center' }}>
+      <p style={{ fontSize: '2rem', marginBottom: '12px' }}>◈</p>
+      <p style={{ color: 'var(--ash)', marginBottom: '6px', fontWeight: '500' }}>No bake plans yet</p>
+      <p style={{ color: 'var(--mist)', fontSize: '0.85rem', marginBottom: '20px' }}>Create your first bake plan to generate a schedule.</p>
+      <Link to="/goals">
+        <button className="btn-primary">Plan a Bake</button>
+      </Link>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return <div style={{ textAlign: 'center', padding: '48px', color: 'var(--mist)', fontStyle: 'italic' }}>Loading…</div>;
+}
+
+const secondaryBtnStyle = {
+  padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--crumb)',
+  background: 'transparent', cursor: 'pointer', fontSize: '0.82rem', color: 'var(--ash)',
+};

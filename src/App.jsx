@@ -1,21 +1,18 @@
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Dashboard from './pages/Dashboard';
 import StarterPage from './pages/StarterPage';
 import GoalsPage from './pages/GoalsPage';
 import BakingPage from './pages/BakingPage';
 import RecipesPage from './pages/RecipesPage';
-import FeedingReminderBanner from './components/shared/FeedingReminderBanner';
-import { useReminderSettings } from './hooks/useData';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { differenceInHours, parseISO } from 'date-fns';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Dashboard', shortLabel: 'Home', icon: '⌂' },
-  { path: '/starter', label: 'Starter', shortLabel: 'Starter', icon: '🫙' },
-  { path: '/goals', label: 'Weekly Goals', shortLabel: 'Goals', icon: '◎' },
-  { path: '/baking', label: 'Baking', shortLabel: 'Baking', icon: '◈' },
+  { path: '/starter', label: 'Starters', shortLabel: 'Starters', icon: '🫙' },
   { path: '/recipes', label: 'Recipes', shortLabel: 'Recipes', icon: '◇' },
+  { path: '/goals', label: 'Plan a Bake', shortLabel: 'Plan', icon: '◎' },
+  { path: '/baking', label: 'Bake Plans', shortLabel: 'Plans', icon: '◈' },
 ];
 
 export default function App() {
@@ -28,15 +25,6 @@ export default function App() {
 
 function AppInner() {
   const { user, signOut } = useAuth();
-  const reminderSettings = useReminderSettings();
-  const [showReminder, setShowReminder] = useState(false);
-
-  useEffect(() => {
-    if (!user || !reminderSettings) { setShowReminder(false); return; }
-    if (!reminderSettings.lastFed) { setShowReminder(true); return; }
-    const hoursSince = differenceInHours(new Date(), parseISO(reminderSettings.lastFed));
-    setShowReminder(hoursSince >= (reminderSettings.feedingIntervalHours || 12));
-  }, [reminderSettings, user]);
 
   if (user === undefined) {
     return (
@@ -110,12 +98,6 @@ function AppInner() {
 
         {/* Main content */}
         <div className="flex-1 flex flex-col" style={{ minWidth: 0 }}>
-          {showReminder && (
-            <FeedingReminderBanner
-              settings={reminderSettings}
-              onDismiss={() => setShowReminder(false)}
-            />
-          )}
           <main className="main-content flex-1 p-8" style={{ maxWidth: '1100px', width: '100%', margin: '0 auto' }}>
             <Routes>
               <Route path="/" element={<Dashboard />} />

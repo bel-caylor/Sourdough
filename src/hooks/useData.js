@@ -297,6 +297,68 @@ export async function updateAppSettings(data) {
   return setDoc(doc(db, 'users', uid, 'settings', 'app'), data, { merge: true });
 }
 
+// ── Starters ──────────────────────────────────────────────────────
+export function useStarters() {
+  const { user } = useAuth();
+  const [data, setData] = useState(undefined);
+
+  useEffect(() => {
+    if (!user) { setData([]); return; }
+    const q = query(userCol(user.uid, 'starters'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => {
+      setData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => setData([]));
+  }, [user?.uid]);
+
+  return data;
+}
+
+export async function addStarter(data) {
+  const uid = getUid();
+  return addDoc(userCol(uid, 'starters'), { ...data, createdAt: new Date().toISOString() });
+}
+
+export async function updateStarter(id, data) {
+  const uid = getUid();
+  return updateDoc(userDoc(uid, 'starters', id), { ...data, updatedAt: new Date().toISOString() });
+}
+
+export async function deleteStarter(id) {
+  const uid = getUid();
+  return deleteDoc(userDoc(uid, 'starters', id));
+}
+
+// ── Bake Plans ────────────────────────────────────────────────────
+export function useBakePlans() {
+  const { user } = useAuth();
+  const [data, setData] = useState(undefined);
+
+  useEffect(() => {
+    if (!user) { setData([]); return; }
+    const q = query(userCol(user.uid, 'bakePlans'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => {
+      setData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => setData([]));
+  }, [user?.uid]);
+
+  return data;
+}
+
+export async function addBakePlan(data) {
+  const uid = getUid();
+  return addDoc(userCol(uid, 'bakePlans'), { ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+}
+
+export async function updateBakePlan(id, data) {
+  const uid = getUid();
+  return updateDoc(userDoc(uid, 'bakePlans', id), { ...data, updatedAt: new Date().toISOString() });
+}
+
+export async function deleteBakePlan(id) {
+  const uid = getUid();
+  return deleteDoc(userDoc(uid, 'bakePlans', id));
+}
+
 // ── Default Stages ────────────────────────────────────────────────
 function getDefaultStages() {
   return [
